@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vibesOnly</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>vibesOnly</h1>
+      <p class="subtitle">Workforce Skills Assessment</p>
+    </header>
+    
+    <main id="app">
+      <div id="scenario-select" class="view">
+        <h2>Choose a Scenario</h2>
+        <div id="scenarios-list"></div>
+      </div>
+      
+      <div id="conversation" class="view hidden">
+        <div id="transcript"></div>
+        <div id="controls">
+          <button id="record-btn">Hold to Speak</button>
+          <button id="end-btn">End Conversation</button>
+        </div>
+        <div id="status"></div>
+      </div>
+      
+      <div id="results" class="view hidden">
+        <h2>Conversation Complete</h2>
+        <p>Thank you for completing this exercise.</p>
+        <button id="new-btn">Start New Session</button>
+      </div>
+    </main>
+  </div>
+  
+  <script src="app.js"></script>
+</body>
+</html>

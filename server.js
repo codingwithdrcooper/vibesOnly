@@ -13,6 +13,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+app.use(express.static('public'));
 
 const DATA_DIR = path.join(__dirname, 'data', 'sessions');
 const SCENARIOS_DIR = path.join(__dirname, 'data', 'scenarios');

@@ -1,0 +1,140 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f5f5f5;
+  min-height: 100vh;
+}
+
+.container {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+h1 {
+  color: #333;
+  font-size: 2rem;
+}
+
+.subtitle {
+  color: #666;
+  margin-top: 5px;
+}
+
+.view {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.hidden {
+  display: none;
+}
+
+#scenarios-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.scenario-card {
+  padding: 16px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.scenario-card:hover {
+  border-color: #4a90d9;
+  background: #f8f9fa;
+}
+
+#transcript {
+  max-height: 400px;
+  overflow-y: auto;
+  margin-bottom: 20px;
+  padding: 10px;
+  background: #f9f9f9;
+  border-radius: 8px;
+}
+
+.message {
+  margin-bottom: 12px;
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.message.user {
+  background: #e3f2fd;
+  margin-left: 20px;
+}
+
+.message.assistant {
+  background: #f3e5f5;
+  margin-right: 20px;
+}
+
+.message strong {
+  display: block;
+  font-size: 0.8rem;
+  color: #666;
+  margin-bottom: 4px;
+}
+
+#controls {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+#record-btn {
+  background: #4a90d9;
+  color: white;
+}
+
+#record-btn:hover {
+  background: #357abd;
+}
+
+#record-btn.recording {
+  background: #d94a4a;
+}
+
+#end-btn {
+  background: #666;
+  color: white;
+}
+
+#new-btn {
+  background: #4a90d9;
+  color: white;
+  margin-top: 20px;
+}
+
+#status {
+  text-align: center;
+  margin-top: 10px;
+  color: #666;
+}
