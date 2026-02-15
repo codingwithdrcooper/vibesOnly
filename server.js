@@ -18,9 +18,6 @@ app.use(express.static('public'));
 const { exec } = require('child_process');
 const axios = require('axios');
 
-const WHISPER_CLI = '/opt/homebrew/bin/whisper-cli';
-const WHISPER_MODEL = path.join(process.env.HOME || '/Users/coop', '.whisper', 'ggml-base.bin');
-
 app.post('/api/transcribe', (req, res) => {
   const { audio } = req.body;
   
@@ -28,47 +25,9 @@ app.post('/api/transcribe', (req, res) => {
     return res.status(400).json({ error: 'No audio provided' });
   }
   
-  const audioBuffer = Buffer.from(audio, 'base64');
-  const tempWebm = path.join(__dirname, 'temp_input.webm');
-  const tempWav = path.join(__dirname, 'temp_input.wav');
-  const tempTxt = path.join(__dirname, 'temp_output.txt');
-  
-  try {
-    fs.writeFileSync(tempWebm, audioBuffer);
-  } catch (e) {
-    return res.status(500).json({ error: 'Failed to write audio file' });
-  }
-  
-  const convertCmd = `ffmpeg -i "${tempWebm}" -ar 16000 -ac 1 -c:a pcm_s16le "${tempWav}" 2>/dev/null`;
-  
-  exec(convertCmd, (convError) => {
-    try { fs.unlinkSync(tempWebm); } catch (e) {}
-    
-    if (convError) {
-      console.error('Convert error:', convError.message);
-      return res.status(500).json({ error: 'Failed to convert audio' });
-    }
-    
-    const whisperCmd = `${WHISPER_CLI} -m "${WHISPER_MODEL}" -f "${tempWav}" -otxt > "${tempTxt}" 2>/dev/null`;
-    
-    exec(whisperCmd, (error) => {
-      try { fs.unlinkSync(tempWav); } catch (e) {}
-      
-      if (error) {
-        console.error('Whisper error:', error.message);
-        return res.status(500).json({ error: 'Transcription failed' });
-      }
-      
-      try {
-        const text = fs.readFileSync(tempTxt, 'utf-8').trim();
-        try { fs.unlinkSync(tempTxt); } catch (e) {}
-        res.json({ text });
-      } catch (e) {
-        console.error('Read error:', e);
-        res.status(500).json({ error: 'Failed to read transcription' });
-      }
-    });
-  });
+  // Note: Local whisper transcription requires whisper CLI and model
+  // For now, return error - browser speech recognition will be used instead
+  res.status(500).json({ error: 'Transcription not available - please use browser speech input' });
 });
 
 app.post('/api/tts', async (req, res) => {

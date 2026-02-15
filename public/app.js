@@ -3,8 +3,8 @@ const API_URL = window.location.origin + '/api';
 let currentSessionId = null;
 let currentScenario = null;
 let isRecording = false;
-let mediaRecorder = null;
-let audioChunks = [];
+let recognition = null;
+let speechSynthesis = window.speechSynthesis;
 
 async function loadScenarios() {
   const response = await fetch(`${API_URL}/scenarios`);
@@ -39,6 +39,7 @@ async function startSession(scenarioId) {
   
   displayTranscript(transcript);
   speak(scenario.initialMessage);
+  initSpeechRecognition();
 }
 
 function displayTranscript(messages) {
@@ -53,71 +54,34 @@ function displayTranscript(messages) {
   container.scrollTop = container.scrollHeight;
 }
 
-async function startRecording() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    
-    mediaRecorder = new MediaRecorder(stream);
-    audioChunks = [];
-    
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        audioChunks.push(event.data);
-      }
-    };
-    
-    mediaRecorder.onstop = async () => {
-      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-      const reader = new FileReader();
-      
-      reader.onloadend = async () => {
-        const base64 = reader.result.split(',')[1];
-        setStatus('Transcribing...');
-        
-        try {
-          const response = await fetch(`${API_URL}/transcribe`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audio: base64 })
-          });
-          
-          const data = await response.json();
-          
-          if (data.text && data.text.trim()) {
-            sendMessage(data.text.trim());
-          } else {
-            setStatus('No speech detected. Try again.');
-          }
-        } catch (err) {
-          console.error('Transcription error:', err);
-          setStatus('Error transcribing');
-        }
-        
-        stream.getTracks().forEach(track => track.stop());
-      };
-      
-      reader.readAsDataURL(audioBlob);
-    };
-    
-    mediaRecorder.start();
-    isRecording = true;
-    document.getElementById('record-btn').classList.add('recording');
-    document.getElementById('record-btn').textContent = 'Stop Speaking';
+function initSpeechRecognition() {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    alert('Speech recognition not supported. Please use Chrome or Edge.');
+    return;
+  }
+  
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  
+  recognition.onstart = () => {
     setStatus('Listening...');
+  };
+  
+  recognition.onresult = (event) => {
+    const transcript = Array.from(event.results)
+      .map(r => r[0].transcript)
+      .join('');
     
-  } catch (err) {
-    console.error('Error starting recording:', err);
-    setStatus('Error accessing microphone');
-  }
-}
-
-function stopRecording() {
-  if (mediaRecorder && isRecording) {
-    mediaRecorder.stop();
-    isRecording = false;
-    document.getElementById('record-btn').classList.remove('recording');
-    document.getElementById('record-btn').textContent = 'Start Speaking';
-  }
+    setStatus(`Heard: ${transcript}`);
+  };
+  
+  recognition.onend = () => {};
+  
+  recognition.onerror = (e) => {
+    console.error('Speech error:', e);
+  };
 }
 
 async function sendMessage(text) {
@@ -180,15 +144,28 @@ function speak(text) {
   })
   .then(res => res.json())
   .then(data => {
-    const audio = new Audio(`data:audio/mpeg;base64,${data.audio}`);
-    audio.onended = () => setStatus('');
-    audio.onerror = () => setStatus('');
-    audio.play();
+    if (data.audio) {
+      const audio = new Audio(`data:audio/mpeg;base64,${data.audio}`);
+      audio.onended = () => setStatus('');
+      audio.onerror = () => {
+        browserSpeak(text);
+      };
+      audio.play();
+    } else {
+      browserSpeak(text);
+    }
   })
-  .catch(err => {
-    console.error('TTS error:', err);
-    setStatus('');
+  .catch(() => {
+    browserSpeak(text);
   });
+}
+
+function browserSpeak(text) {
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 1;
+  utterance.onend = () => setStatus('');
+  utterance.onerror = () => setStatus('');
+  speechSynthesis.speak(utterance);
 }
 
 async function endConversation() {
@@ -217,9 +194,25 @@ function setStatus(text) {
 
 document.getElementById('record-btn').addEventListener('click', () => {
   if (isRecording) {
-    stopRecording();
+    isRecording = false;
+    recognition.stop();
+    document.getElementById('record-btn').classList.remove('recording');
+    document.getElementById('record-btn').textContent = 'Start Speaking';
+    
+    const status = document.getElementById('status').textContent;
+    if (status.startsWith('Heard:')) {
+      const text = status.replace('Heard:', '').trim();
+      if (text) {
+        sendMessage(text);
+      }
+    }
+    setStatus('');
   } else {
-    startRecording();
+    isRecording = true;
+    recognition.start();
+    document.getElementById('record-btn').classList.add('recording');
+    document.getElementById('record-btn').textContent = 'Stop Speaking';
+    setStatus('Listening...');
   }
 });
 
