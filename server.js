@@ -2,12 +2,12 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
-const fsp = require('fs/promises');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 const multer = require('multer');
 const { exec } = require('child_process');
 const axios = require('axios');
+const db = require('./db');
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -171,21 +171,13 @@ app.post('/api/tts', async (req, res) => {
   }
 });
 
-const DATA_DIR = path.join(__dirname, 'data', 'sessions');
 const SCENARIOS_DIR = path.join(__dirname, 'data', 'scenarios');
-
-function ensureDir(dir) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
 app.get('/api/scenarios', (req, res) => {
-  ensureDir(SCENARIOS_DIR);
   const files = fs.readdirSync(SCENARIOS_DIR).filter(f => f.endsWith('.json'));
   const scenarios = files.map(f => {
     const data = fs.readFileSync(path.join(SCENARIOS_DIR, f), 'utf-8');
@@ -194,64 +186,117 @@ app.get('/api/scenarios', (req, res) => {
   res.json(scenarios);
 });
 
-app.post('/api/sessions', (req, res) => {
-  const { scenarioId } = req.body;
-  const sessionId = Date.now().toString();
-  const sessionDir = path.join(DATA_DIR, sessionId);
-  
-  ensureDir(sessionDir);
-  
-  const scenarioPath = path.join(SCENARIOS_DIR, `${scenarioId}.json`);
-  if (!fs.existsSync(scenarioPath)) {
-    return res.status(404).json({ error: 'Scenario not found' });
+app.post('/api/sessions', async (req, res) => {
+  try {
+    const { scenarioId } = req.body;
+    const sessionId = Date.now().toString();
+
+    const scenarioPath = path.join(SCENARIOS_DIR, `${scenarioId}.json`);
+    if (!fs.existsSync(scenarioPath)) {
+      return res.status(404).json({ error: 'Scenario not found' });
+    }
+
+    const scenario = JSON.parse(fs.readFileSync(scenarioPath, 'utf-8'));
+
+    const transcript = [{
+      role: 'assistant',
+      content: scenario.initialMessage
+    }];
+
+    // Insert session and initial transcript message in a transaction
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        'INSERT INTO sessions (id, scenario_id) VALUES ($1, $2)',
+        [sessionId, scenarioId]
+      );
+      await client.query(
+        'INSERT INTO transcript_messages (session_id, role, content, position) VALUES ($1, $2, $3, $4)',
+        [sessionId, 'assistant', scenario.initialMessage, 0]
+      );
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    res.json({ sessionId, scenario, transcript });
+  } catch (error) {
+    console.error('Create session error:', error);
+    res.status(500).json({ error: 'Failed to create session' });
   }
-  
-  const scenario = JSON.parse(fs.readFileSync(scenarioPath, 'utf-8'));
-  
-  const transcript = [{
-    role: 'assistant',
-    content: scenario.initialMessage
-  }];
-  
-  fs.writeFileSync(
-    path.join(sessionDir, 'transcript.json'),
-    JSON.stringify(transcript, null, 2)
-  );
-  
-  res.json({ sessionId, scenario, transcript });
 });
 
-app.get('/api/sessions/:id', (req, res) => {
-  const sessionDir = path.join(DATA_DIR, req.params.id);
-  
-  if (!fs.existsSync(sessionDir)) {
-    return res.status(404).json({ error: 'Session not found' });
+app.get('/api/sessions/:id', async (req, res) => {
+  try {
+    const sessionId = req.params.id;
+
+    // Check session exists
+    const sessionResult = await db.query('SELECT id FROM sessions WHERE id = $1', [sessionId]);
+    if (sessionResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    // Get transcript messages ordered by position
+    const msgResult = await db.query(
+      'SELECT role, content FROM transcript_messages WHERE session_id = $1 ORDER BY position',
+      [sessionId]
+    );
+    const transcript = msgResult.rows.map(r => ({ role: r.role, content: r.content }));
+
+    // Get analysis if it exists
+    const analysisResult = await db.query(
+      'SELECT result FROM analyses WHERE session_id = $1',
+      [sessionId]
+    );
+    const analysis = analysisResult.rows.length > 0 ? analysisResult.rows[0].result : null;
+
+    res.json({ transcript, analysis });
+  } catch (error) {
+    console.error('Get session error:', error);
+    res.status(500).json({ error: 'Failed to get session' });
   }
-  
-  const transcript = JSON.parse(
-    fs.readFileSync(path.join(sessionDir, 'transcript.json'), 'utf-8')
-  );
-  
-  let analysis = null;
-  const analysisPath = path.join(sessionDir, 'analysis.json');
-  if (fs.existsSync(analysisPath)) {
-    analysis = JSON.parse(fs.readFileSync(analysisPath, 'utf-8'));
-  }
-  
-  res.json({ transcript, analysis });
 });
 
-app.put('/api/sessions/:id/transcript', (req, res) => {
-  const sessionDir = path.join(DATA_DIR, req.params.id);
-  const transcriptPath = path.join(sessionDir, 'transcript.json');
-  
-  if (!fs.existsSync(sessionDir)) {
-    return res.status(404).json({ error: 'Session not found' });
+app.put('/api/sessions/:id/transcript', async (req, res) => {
+  try {
+    const sessionId = req.params.id;
+
+    // Check session exists
+    const sessionResult = await db.query('SELECT id FROM sessions WHERE id = $1', [sessionId]);
+    if (sessionResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const messages = req.body.transcript;
+
+    // Replace all transcript messages in a transaction
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM transcript_messages WHERE session_id = $1', [sessionId]);
+      for (let i = 0; i < messages.length; i++) {
+        await client.query(
+          'INSERT INTO transcript_messages (session_id, role, content, position) VALUES ($1, $2, $3, $4)',
+          [sessionId, messages[i].role, messages[i].content, i]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Update transcript error:', error);
+    res.status(500).json({ error: 'Failed to update transcript' });
   }
-  
-  fs.writeFileSync(transcriptPath, JSON.stringify(req.body.transcript, null, 2));
-  
-  res.json({ success: true });
 });
 
 app.post('/api/conversation', async (req, res) => {
@@ -291,24 +336,37 @@ app.post('/api/conversation', async (req, res) => {
 });
 
 app.post('/api/sessions/:id/analyze', async (req, res) => {
-  const sessionDir = path.join(DATA_DIR, req.params.id);
+  try {
+    const sessionId = req.params.id;
 
-  if (!fs.existsSync(sessionDir)) {
-    return res.status(404).json({ error: 'Session not found' });
+    // Check session exists
+    const sessionResult = await db.query('SELECT id FROM sessions WHERE id = $1', [sessionId]);
+    if (sessionResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    // Respond immediately so the participant isn't kept waiting
+    res.status(202).json({ status: 'analyzing' });
+
+    // Run the actual analysis in the background
+    runAnalysis(sessionId).catch(error => {
+      console.error(`Background analysis error for session ${sessionId}:`, error);
+    });
+  } catch (error) {
+    console.error('Analyze session error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to start analysis' });
+    }
   }
-
-  // Respond immediately so the participant isn't kept waiting
-  res.status(202).json({ status: 'analyzing' });
-
-  // Run the actual analysis in the background
-  runAnalysis(req.params.id, sessionDir).catch(error => {
-    console.error(`Background analysis error for session ${req.params.id}:`, error);
-  });
 });
 
-async function runAnalysis(sessionId, sessionDir) {
-  const transcriptPath = path.join(sessionDir, 'transcript.json');
-  const transcript = JSON.parse(await fsp.readFile(transcriptPath, 'utf-8'));
+async function runAnalysis(sessionId) {
+  // Read transcript from database
+  const msgResult = await db.query(
+    'SELECT role, content FROM transcript_messages WHERE session_id = $1 ORDER BY position',
+    [sessionId]
+  );
+  const transcript = msgResult.rows;
 
   const analysisPrompt = `You are an expert workplace skills assessor. Analyze the transcript below and provide DETAILED feedback with SPECIFIC EXAMPLES from the conversation.
     
@@ -358,35 +416,42 @@ Return JSON in this exact format:
     analysis = { rawAnalysis: response.content[0].text };
   }
 
-  await fsp.writeFile(
-    path.join(sessionDir, 'analysis.json'),
-    JSON.stringify(analysis, null, 2)
+  // Upsert analysis result
+  await db.query(
+    `INSERT INTO analyses (session_id, result) VALUES ($1, $2)
+     ON CONFLICT (session_id) DO UPDATE SET result = $2, created_at = NOW()`,
+    [sessionId, JSON.stringify(analysis)]
   );
 
   console.log(`Analysis complete for session ${sessionId}`);
 }
 
-app.get('/api/admin/sessions', (req, res) => {
-  ensureDir(DATA_DIR);
-  const sessions = fs.readdirSync(DATA_DIR).filter(f => {
-    return fs.statSync(path.join(DATA_DIR, f)).isDirectory();
-  });
-  
-  const sessionsList = sessions.map(id => {
-    const sessionDir = path.join(DATA_DIR, id);
-    const transcriptPath = path.join(sessionDir, 'transcript.json');
-    
-    let summary = null;
-    if (fs.existsSync(transcriptPath)) {
-      const transcript = JSON.parse(fs.readFileSync(transcriptPath, 'utf-8'));
-      const firstUser = transcript.find(m => m.role === 'user');
-      summary = firstUser ? firstUser.content.substring(0, 100) + '...' : 'No messages';
-    }
-    
-    return { id, summary };
-  });
-  
-  res.json(sessionsList);
+app.get('/api/admin/sessions', async (req, res) => {
+  try {
+    // Single query: get all sessions with the first user message as summary
+    const result = await db.query(`
+      SELECT
+        s.id,
+        COALESCE(
+          SUBSTRING(first_user_msg.content FROM 1 FOR 100) || '...',
+          'No messages'
+        ) AS summary
+      FROM sessions s
+      LEFT JOIN LATERAL (
+        SELECT content
+        FROM transcript_messages tm
+        WHERE tm.session_id = s.id AND tm.role = 'user'
+        ORDER BY tm.position
+        LIMIT 1
+      ) first_user_msg ON true
+      ORDER BY s.created_at DESC
+    `);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Admin sessions error:', error);
+    res.status(500).json({ error: 'Failed to list sessions' });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
