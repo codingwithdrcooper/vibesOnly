@@ -1,13 +1,13 @@
 FROM node:20
 
 # Install ffmpeg for audio format conversion and build tools for whisper.cpp
-RUN apt-get update && apt-get install -y ffmpeg build-essential curl
+RUN apt-get update && apt-get install -y ffmpeg build-essential curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Install dependencies
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 # Build whisper.cpp for this platform
 # The bundled Makefile uses -mcpu=native which fails on aarch64 Docker (QEMU),
@@ -28,6 +28,11 @@ RUN mkdir -p uploads
 
 # Expose port
 EXPOSE 3000
+
+# Create non-root user and fix ownership
+RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser && \
+    chown -R appuser:appuser /app
+USER appuser
 
 # Start the app
 CMD ["npm", "start"]

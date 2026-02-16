@@ -1,14 +1,18 @@
 {
-  "name": "vibesononly",
+  "name": "vibesonly",
   "version": "1.0.0",
   "description": "Voice-based workforce skills assessment platform",
+  "private": true,
   "main": "server.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "migrate": "node-pg-migrate up --database-url-var DATABASE_URL --migrations-dir migrations",
     "migrate:down": "node-pg-migrate down --database-url-var DATABASE_URL --migrations-dir migrations",
     "start": "npm run migrate && node server.js",
     "start:no-migrate": "node server.js",
-    "setup-whisper": "bash scripts/setup-whisper.sh"
+    "setup-whisper": "echo 'Whisper is set up automatically during Docker build'"
   },
   "keywords": [],
   "author": "",

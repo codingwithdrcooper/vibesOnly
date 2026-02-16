@@ -8,6 +8,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: #f5f5f5;
   min-height: 100vh;
+  line-height: 1.5;
 }
 
 .container {
@@ -27,7 +28,7 @@ h1 {
 }
 
 .subtitle {
-  color: #666;
+  color: #555;
   margin-top: 5px;
 }
 
@@ -57,9 +58,15 @@ h1 {
   transition: all 0.2s;
 }
 
-.scenario-card:hover {
+.scenario-card:hover,
+.scenario-card:focus-visible {
   border-color: #4a90d9;
   background: #f8f9fa;
+  outline: none;
+}
+
+.scenario-card:focus-visible {
+  box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.3);
 }
 
 #transcript {
@@ -75,6 +82,8 @@ h1 {
   margin-bottom: 12px;
   padding: 10px;
   border-radius: 8px;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .message.user {
@@ -90,7 +99,7 @@ h1 {
 .message strong {
   display: block;
   font-size: 0.8rem;
-  color: #666;
+  color: #555;
   margin-bottom: 4px;
 }
 
@@ -107,6 +116,16 @@ button {
   font-size: 1rem;
   cursor: pointer;
   transition: all 0.2s;
+}
+
+button:focus-visible {
+  outline: 2px solid #4a90d9;
+  outline-offset: 2px;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 #record-btn {
@@ -127,16 +146,24 @@ button {
   color: white;
 }
 
+#end-btn:hover {
+  background: #555;
+}
+
 #new-btn {
   background: #4a90d9;
   color: white;
   margin-top: 20px;
 }
 
+#new-btn:hover {
+  background: #357abd;
+}
+
 #status {
   text-align: center;
   margin-top: 10px;
-  color: #666;
+  color: #555;
 }
 
 .stt-badge {
@@ -144,8 +171,9 @@ button {
   font-size: 0.75rem;
   padding: 4px 10px;
   border-radius: 12px;
-  display: inline-block;
-  margin-bottom: 10px;
+  display: block;
+  margin: 0 auto 10px;
+  width: fit-content;
 }
 
 .stt-badge.whisper {
@@ -156,4 +184,25 @@ button {
 .stt-badge.browser {
   background: #fff3e0;
   color: #e65100;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition: none !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .container {
+    padding: 12px;
+  }
+  
+  h1 {
+    font-size: 1.5rem;
+  }
+  
+  button {
+    padding: 10px 16px;
+    font-size: 0.9rem;
+  }
 }

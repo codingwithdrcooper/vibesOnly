@@ -15,6 +15,17 @@ let audioChunks = [];
 // Browser STT fallback (only initialized if whisper is unavailable)
 let recognition = null;
 let lastRecognizedText = '';
+let sendingMessage = false;
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 // ---- STT Mode Detection ----
 
@@ -256,42 +267,55 @@ async function stopRecording() {
 // ---- Scenarios & Session ----
 
 async function loadScenarios() {
-  const response = await fetch(`${API_URL}/scenarios`);
-  const scenarios = await response.json();
+  try {
+    const response = await fetch(`${API_URL}/scenarios`);
+    if (!response.ok) throw new Error('Failed to load scenarios');
+    const scenarios = await response.json();
 
-  const list = document.getElementById('scenarios-list');
-  list.innerHTML = scenarios.map(s => `
-    <div class="scenario-card" data-id="${s.id}">
-      <h3>${s.name}</h3>
-      <p>${s.description}</p>
-    </div>
-  `).join('');
+    const list = document.getElementById('scenarios-list');
+    list.innerHTML = scenarios.map(s => `
+      <div class="scenario-card" data-id="${escapeHtml(s.id)}">
+        <h3>${escapeHtml(s.name)}</h3>
+        <p>${escapeHtml(s.description)}</p>
+      </div>
+    `).join('');
 
-  list.querySelectorAll('.scenario-card').forEach(card => {
-    card.addEventListener('click', () => startSession(card.dataset.id));
-  });
+    list.querySelectorAll('.scenario-card').forEach(card => {
+      card.addEventListener('click', () => startSession(card.dataset.id));
+    });
+  } catch (error) {
+    console.error('Failed to load scenarios:', error);
+    const list = document.getElementById('scenarios-list');
+    list.textContent = 'Failed to load scenarios. Please refresh the page.';
+  }
 }
 
 async function startSession(scenarioId) {
-  // Detect STT mode before starting the session
-  await detectSttMode();
+  try {
+    // Detect STT mode before starting the session
+    await detectSttMode();
 
-  const response = await fetch(`${API_URL}/sessions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scenarioId })
-  });
+    const response = await fetch(`${API_URL}/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenarioId })
+    });
 
-  const { sessionId, scenario, transcript } = await response.json();
-  currentSessionId = sessionId;
-  currentScenario = scenario;
-  currentTranscript = transcript;
+    if (!response.ok) throw new Error('Failed to start session');
+    const { sessionId, scenario, transcript } = await response.json();
+    currentSessionId = sessionId;
+    currentScenario = scenario;
+    currentTranscript = transcript;
 
-  document.getElementById('scenario-select').classList.add('hidden');
-  document.getElementById('conversation').classList.remove('hidden');
+    document.getElementById('scenario-select').classList.add('hidden');
+    document.getElementById('conversation').classList.remove('hidden');
 
-  displayTranscript(currentTranscript);
-  speak(scenario.initialMessage);
+    displayTranscript(currentTranscript);
+    speak(scenario.initialMessage);
+  } catch (error) {
+    console.error('Failed to start session:', error);
+    setStatus('Failed to start session. Please try again.');
+  }
 }
 
 // ---- Transcript ----
@@ -299,9 +323,9 @@ async function startSession(scenarioId) {
 function displayTranscript(messages) {
   const container = document.getElementById('transcript');
   container.innerHTML = messages.map(m => `
-    <div class="message ${m.role}">
+    <div class="message ${escapeHtml(m.role)}">
       <strong>${m.role === 'user' ? 'You' : 'AI'}</strong>
-      ${m.content}
+      ${escapeHtml(m.content)}
     </div>
   `).join('');
 
@@ -311,6 +335,8 @@ function displayTranscript(messages) {
 // ---- Conversation ----
 
 async function sendMessage(text) {
+  if (sendingMessage) return; // prevent concurrent sends
+  sendingMessage = true;
   setStatus('Processing...');
 
   currentTranscript.push({ role: 'user', content: text });
@@ -327,6 +353,7 @@ async function sendMessage(text) {
       })
     });
 
+    if (!response.ok) throw new Error('Conversation request failed');
     const { response: aiResponse } = await response.json();
 
     currentTranscript.push({ role: 'assistant', content: aiResponse });
@@ -342,6 +369,8 @@ async function sendMessage(text) {
   } catch (error) {
     console.error('Error:', error);
     setStatus('Error processing message');
+  } finally {
+    sendingMessage = false;
   }
 }
 
@@ -363,7 +392,9 @@ function speak(text) {
       audio.onerror = () => {
         browserSpeak(text);
       };
-      audio.play();
+      audio.play().catch(() => {
+        browserSpeak(text);
+      });
     } else {
       browserSpeak(text);
     }
@@ -383,7 +414,19 @@ function browserSpeak(text) {
 
 // ---- End / Analyze ----
 
-function endConversation() {
+async function endConversation() {
+  // Stop any active recording
+  if (isRecording) {
+    isRecording = false;
+    const btn = document.getElementById('record-btn');
+    btn.classList.remove('recording');
+    btn.textContent = 'Start Speaking';
+    await stopRecording();
+  }
+  
+  // Stop any active speech
+  if (speechSynthesis) speechSynthesis.cancel();
+  
   // Kick off background analysis (fire-and-forget)
   fetch(`${API_URL}/sessions/${currentSessionId}/analyze`, {
     method: 'POST'
@@ -403,15 +446,21 @@ function setStatus(text) {
 
 // Record button - toggle start/stop
 document.getElementById('record-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('record-btn');
+  if (btn.disabled) return;
+  
   if (isRecording) {
     isRecording = false;
-    document.getElementById('record-btn').classList.remove('recording');
-    document.getElementById('record-btn').textContent = 'Start Speaking';
+    btn.disabled = true;
+    btn.classList.remove('recording');
+    btn.textContent = 'Processing...';
     await stopRecording();
+    btn.textContent = 'Start Speaking';
+    btn.disabled = false;
   } else {
     isRecording = true;
-    document.getElementById('record-btn').classList.add('recording');
-    document.getElementById('record-btn').textContent = 'Stop Speaking';
+    btn.classList.add('recording');
+    btn.textContent = 'Stop Speaking';
     startRecording();
   }
 });
@@ -422,4 +471,4 @@ document.getElementById('new-btn').addEventListener('click', () => {
   location.reload();
 });
 
-loadScenarios();
+loadScenarios().catch(err => console.error('Init error:', err));

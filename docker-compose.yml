@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16
+    restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-vibesonly}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-vibesonly}
@@ -22,12 +23,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
     environment:
       - DATABASE_URL
       - ANTHROPIC_API_KEY
       - ELEVENLABS_API_KEY
+      - ADMIN_TOKEN
+      - CORS_ORIGIN
     volumes:
-      - ./data/scenarios:/app/data/scenarios
+      - ./data/scenarios:/app/data/scenarios:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     networks:
       - backend
 

@@ -5,7 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 const multer = require('multer');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
+const crypto = require('crypto');
 const axios = require('axios');
 const db = require('./db');
 
@@ -15,8 +16,8 @@ const anthropic = new Anthropic({
 
 const app = express();
 
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(cors({ origin: process.env.CORS_ORIGIN || true }));
+app.use(express.json({ limit: '1mb' }));
 app.use(express.static('public'));
 
 // Configure multer for audio file uploads
@@ -24,7 +25,17 @@ const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
-const upload = multer({ dest: uploadsDir });
+const upload = multer({
+  dest: uploadsDir,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('audio/') || file.mimetype === 'application/octet-stream') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only audio files are allowed'));
+    }
+  }
+});
 
 // Check if whisper.cpp binary and model are available
 let whisperAvailable = false;
@@ -66,8 +77,7 @@ app.get('/api/stt-status', (req, res) => {
 function convertToWav(inputPath) {
   return new Promise((resolve, reject) => {
     const outputPath = inputPath + '.wav';
-    const cmd = `ffmpeg -y -i "${inputPath}" -ar 16000 -ac 1 -c:a pcm_s16le "${outputPath}"`;
-    exec(cmd, (error, stdout, stderr) => {
+    execFile('ffmpeg', ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', outputPath], (error, stdout, stderr) => {
       if (error) {
         reject(new Error(`ffmpeg conversion failed: ${error.message}`));
         return;
@@ -82,9 +92,8 @@ function runWhisperCpp(wavPath) {
   return new Promise((resolve, reject) => {
     const mainBinary = path.join(whisperCppDir, 'main');
     const modelFile = path.join(whisperCppDir, 'models', 'ggml-base.en.bin');
-    const cmd = `"${mainBinary}" -l en -m "${modelFile}" -f "${wavPath}" --no-timestamps 2>/dev/null`;
 
-    exec(cmd, { cwd: whisperCppDir, timeout: 60000 }, (error, stdout, stderr) => {
+    execFile(mainBinary, ['-l', 'en', '-m', modelFile, '-f', wavPath, '--no-timestamps'], { cwd: whisperCppDir, timeout: 60000 }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(`whisper.cpp failed: ${error.message}`));
         return;
@@ -104,7 +113,7 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
 
   if (!whisperAvailable || !whisperCppDir) {
     // Clean up uploaded file
-    fs.unlinkSync(req.file.path);
+    try { fs.unlinkSync(req.file.path); } catch (e) { /* ignore cleanup error */ }
     return res.status(503).json({ error: 'Whisper transcription not available' });
   }
 
@@ -121,7 +130,7 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
     res.json({ text });
   } catch (error) {
     console.error('[whisper] Transcription error:', error.message);
-    res.status(500).json({ error: 'Transcription failed: ' + error.message });
+    res.status(500).json({ error: 'Transcription failed' });
   } finally {
     // Clean up temp files
     try {
@@ -135,6 +144,10 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
 
 app.post('/api/tts', async (req, res) => {
   const { text } = req.body;
+
+  if (!text || typeof text !== 'string' || text.length > 5000) {
+    return res.status(400).json({ error: 'text is required and must be under 5000 characters' });
+  }
   
   const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
   
@@ -177,26 +190,34 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.get('/api/scenarios', (req, res) => {
-  const files = fs.readdirSync(SCENARIOS_DIR).filter(f => f.endsWith('.json'));
-  const scenarios = files.map(f => {
-    const data = fs.readFileSync(path.join(SCENARIOS_DIR, f), 'utf-8');
-    return JSON.parse(data);
-  });
-  res.json(scenarios);
+app.get('/api/scenarios', async (req, res) => {
+  try {
+    const files = (await fs.promises.readdir(SCENARIOS_DIR)).filter(f => f.endsWith('.json'));
+    const scenarios = await Promise.all(files.map(async f => {
+      const data = await fs.promises.readFile(path.join(SCENARIOS_DIR, f), 'utf-8');
+      return JSON.parse(data);
+    }));
+    res.json(scenarios);
+  } catch (error) {
+    console.error('Load scenarios error:', error);
+    res.status(500).json({ error: 'Failed to load scenarios' });
+  }
 });
 
 app.post('/api/sessions', async (req, res) => {
   try {
     const { scenarioId } = req.body;
-    const sessionId = Date.now().toString();
+    if (!scenarioId || typeof scenarioId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(scenarioId)) {
+      return res.status(400).json({ error: 'Invalid scenario ID' });
+    }
+    const sessionId = crypto.randomUUID();
 
     const scenarioPath = path.join(SCENARIOS_DIR, `${scenarioId}.json`);
-    if (!fs.existsSync(scenarioPath)) {
+    try { await fs.promises.access(scenarioPath); } catch {
       return res.status(404).json({ error: 'Scenario not found' });
     }
 
-    const scenario = JSON.parse(fs.readFileSync(scenarioPath, 'utf-8'));
+    const scenario = JSON.parse(await fs.promises.readFile(scenarioPath, 'utf-8'));
 
     const transcript = [{
       role: 'assistant',
@@ -235,7 +256,7 @@ app.get('/api/sessions/:id', async (req, res) => {
     const sessionId = req.params.id;
 
     // Check session exists
-    const sessionResult = await db.query('SELECT id FROM sessions WHERE id = $1', [sessionId]);
+    const sessionResult = await db.query('SELECT id, created_at FROM sessions WHERE id = $1', [sessionId]);
     if (sessionResult.rows.length === 0) {
       return res.status(404).json({ error: 'Session not found' });
     }
@@ -254,7 +275,7 @@ app.get('/api/sessions/:id', async (req, res) => {
     );
     const analysis = analysisResult.rows.length > 0 ? analysisResult.rows[0].result : null;
 
-    res.json({ transcript, analysis });
+    res.json({ transcript, analysis, created_at: sessionResult.rows[0].created_at });
   } catch (error) {
     console.error('Get session error:', error);
     res.status(500).json({ error: 'Failed to get session' });
@@ -272,6 +293,19 @@ app.put('/api/sessions/:id/transcript', async (req, res) => {
     }
 
     const messages = req.body.transcript;
+
+    // Validate transcript format
+    if (!Array.isArray(messages)) {
+      return res.status(400).json({ error: 'transcript must be an array' });
+    }
+    for (const msg of messages) {
+      if (!msg || typeof msg.role !== 'string' || typeof msg.content !== 'string') {
+        return res.status(400).json({ error: 'Each message must have role and content strings' });
+      }
+      if (!['user', 'assistant'].includes(msg.role)) {
+        return res.status(400).json({ error: 'role must be "user" or "assistant"' });
+      }
+    }
 
     // Replace all transcript messages in a transaction
     const client = await db.pool.connect();
@@ -302,6 +336,13 @@ app.put('/api/sessions/:id/transcript', async (req, res) => {
 app.post('/api/conversation', async (req, res) => {
   try {
     const { transcript, scenario, message } = req.body;
+
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ error: 'message is required' });
+    }
+    if (!scenario || typeof scenario.systemPrompt !== 'string' || typeof scenario.characterName !== 'string') {
+      return res.status(400).json({ error: 'Invalid scenario data' });
+    }
     
     const systemPrompt = `${scenario.systemPrompt}\n\nIMPORTANT: Keep your responses SHORT - 2-5 sentences maximum. Be conversational, not a long speech. You are roleplaying as: ${scenario.characterName}`;
     
@@ -326,7 +367,7 @@ app.post('/api/conversation', async (req, res) => {
     });
     
     res.json({ 
-      response: response.content[0].text,
+      response: response.content?.[0]?.text || '',
       role: 'assistant'
     });
   } catch (error) {
@@ -411,29 +452,45 @@ Return JSON in this exact format:
 
   let analysis;
   try {
-    analysis = JSON.parse(response.content[0].text);
+    const responseText = response.content?.[0]?.text;
+    if (!responseText) throw new Error('Empty response from API');
+    analysis = JSON.parse(responseText);
   } catch {
-    analysis = { rawAnalysis: response.content[0].text };
+    analysis = { rawAnalysis: response.content?.[0]?.text || 'Analysis failed to parse' };
   }
 
   // Upsert analysis result
   await db.query(
     `INSERT INTO analyses (session_id, result) VALUES ($1, $2)
-     ON CONFLICT (session_id) DO UPDATE SET result = $2, created_at = NOW()`,
+     ON CONFLICT (session_id) DO UPDATE SET result = $2, updated_at = NOW()`,
     [sessionId, JSON.stringify(analysis)]
   );
 
   console.log(`Analysis complete for session ${sessionId}`);
 }
 
-app.get('/api/admin/sessions', async (req, res) => {
+// Simple token-based admin auth middleware
+function requireAdminAuth(req, res, next) {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken) {
+    return res.status(503).json({ error: 'Admin access not configured' });
+  }
+  const provided = req.headers.authorization?.replace('Bearer ', '');
+  if (provided !== adminToken) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+app.get('/api/admin/sessions', requireAdminAuth, async (req, res) => {
   try {
     // Single query: get all sessions with the first user message as summary
     const result = await db.query(`
       SELECT
         s.id,
+        s.created_at,
         COALESCE(
-          SUBSTRING(first_user_msg.content FROM 1 FOR 100) || '...',
+          CASE WHEN LENGTH(first_user_msg.content) > 100 THEN SUBSTRING(first_user_msg.content FROM 1 FOR 100) || '...' ELSE first_user_msg.content END,
           'No messages'
         ) AS summary
       FROM sessions s
@@ -455,6 +512,27 @@ app.get('/api/admin/sessions', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    db.pool.end().then(() => {
+      console.log('Database pool closed');
+      process.exit(0);
+    });
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  server.close(() => {
+    db.pool.end().then(() => {
+      console.log('Database pool closed');
+      process.exit(0);
+    });
+  });
 });

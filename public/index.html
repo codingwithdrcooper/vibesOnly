@@ -21,18 +21,18 @@
       
       <div id="conversation" class="view hidden">
         <div id="stt-mode-badge" class="stt-badge hidden"></div>
-        <div id="transcript"></div>
+        <div id="transcript" aria-live="polite"></div>
         <div id="controls">
-          <button id="record-btn">Start Speaking</button>
-          <button id="end-btn">End Conversation</button>
+          <button type="button" id="record-btn">Start Speaking</button>
+          <button type="button" id="end-btn">End Conversation</button>
         </div>
-        <div id="status"></div>
+        <div id="status" aria-live="polite"></div>
       </div>
       
       <div id="results" class="view hidden">
         <h2>Conversation Complete</h2>
         <p>Thank you for completing this exercise.</p>
-        <button id="new-btn">Start New Session</button>
+        <button type="button" id="new-btn">Start New Session</button>
       </div>
     </main>
   </div>
