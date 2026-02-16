@@ -2,6 +2,7 @@ const API_URL = window.location.origin + '/api';
 
 let currentSessionId = null;
 let currentScenario = null;
+let currentTranscript = [];
 let isRecording = false;
 let speechSynthesis = window.speechSynthesis;
 
@@ -284,11 +285,12 @@ async function startSession(scenarioId) {
   const { sessionId, scenario, transcript } = await response.json();
   currentSessionId = sessionId;
   currentScenario = scenario;
+  currentTranscript = transcript;
 
   document.getElementById('scenario-select').classList.add('hidden');
   document.getElementById('conversation').classList.remove('hidden');
 
-  displayTranscript(transcript);
+  displayTranscript(currentTranscript);
   speak(scenario.initialMessage);
 }
 
@@ -306,28 +308,13 @@ function displayTranscript(messages) {
   container.scrollTop = container.scrollHeight;
 }
 
-function getCurrentTranscript() {
-  const container = document.getElementById('transcript');
-  const messages = container.querySelectorAll('.message');
-  const transcript = [];
-
-  messages.forEach(msg => {
-    const role = msg.classList.contains('user') ? 'user' : 'assistant';
-    const content = msg.textContent.replace(/^(You|AI)\s*/, '');
-    transcript.push({ role, content });
-  });
-
-  return transcript;
-}
-
 // ---- Conversation ----
 
 async function sendMessage(text) {
   setStatus('Processing...');
 
-  const transcript = getCurrentTranscript();
-  transcript.push({ role: 'user', content: text });
-  displayTranscript(transcript);
+  currentTranscript.push({ role: 'user', content: text });
+  displayTranscript(currentTranscript);
 
   try {
     const response = await fetch(`${API_URL}/conversation`, {
@@ -335,20 +322,20 @@ async function sendMessage(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         scenario: currentScenario,
-        transcript: transcript.slice(0, -1),
+        transcript: currentTranscript.slice(0, -1),
         message: text
       })
     });
 
     const { response: aiResponse } = await response.json();
 
-    transcript.push({ role: 'assistant', content: aiResponse });
-    displayTranscript(transcript);
+    currentTranscript.push({ role: 'assistant', content: aiResponse });
+    displayTranscript(currentTranscript);
 
     await fetch(`${API_URL}/sessions/${currentSessionId}/transcript`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript })
+      body: JSON.stringify({ transcript: currentTranscript })
     });
 
     speak(aiResponse);
