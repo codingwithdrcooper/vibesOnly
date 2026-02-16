@@ -4,6 +4,9 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
+const multer = require('multer');
+const { exec } = require('child_process');
+const axios = require('axios');
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -15,19 +18,118 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static('public'));
 
-const { exec } = require('child_process');
-const axios = require('axios');
+// Configure multer for audio file uploads
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+const upload = multer({ dest: uploadsDir });
 
-app.post('/api/transcribe', (req, res) => {
-  const { audio } = req.body;
-  
-  if (!audio) {
-    return res.status(400).json({ error: 'No audio provided' });
+// Check if whisper.cpp binary and model are available
+let whisperAvailable = false;
+let whisperCppDir = null;
+
+function checkWhisperAvailability() {
+  try {
+    // whisper-node installs whisper.cpp under its lib directory
+    const whisperNodePath = require.resolve('whisper-node');
+    whisperCppDir = path.join(path.dirname(whisperNodePath), '..', 'lib', 'whisper.cpp');
+    const mainBinary = path.join(whisperCppDir, 'main');
+    const modelFile = path.join(whisperCppDir, 'models', 'ggml-base.en.bin');
+
+    if (fs.existsSync(mainBinary) && fs.existsSync(modelFile)) {
+      whisperAvailable = true;
+      console.log('whisper.cpp available at:', whisperCppDir);
+    } else {
+      console.warn('whisper.cpp binary or model not found.');
+      if (!fs.existsSync(mainBinary)) console.warn('  Missing binary:', mainBinary);
+      if (!fs.existsSync(modelFile)) console.warn('  Missing model:', modelFile);
+    }
+  } catch (err) {
+    console.warn('whisper.cpp not available:', err.message);
+    whisperAvailable = false;
   }
-  
-  // Note: Local whisper transcription requires whisper CLI and model
-  // For now, return error - browser speech recognition will be used instead
-  res.status(500).json({ error: 'Transcription not available - please use browser speech input' });
+}
+
+checkWhisperAvailability();
+
+// SST status endpoint - client checks this to decide whisper vs browser fallback
+app.get('/api/stt-status', (req, res) => {
+  res.json({
+    whisperAvailable,
+    fallback: 'browser-speech-recognition',
+  });
+});
+
+// Convert uploaded audio to 16kHz WAV using ffmpeg
+function convertToWav(inputPath) {
+  return new Promise((resolve, reject) => {
+    const outputPath = inputPath + '.wav';
+    const cmd = `ffmpeg -y -i "${inputPath}" -ar 16000 -ac 1 -c:a pcm_s16le "${outputPath}"`;
+    exec(cmd, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(`ffmpeg conversion failed: ${error.message}`));
+        return;
+      }
+      resolve(outputPath);
+    });
+  });
+}
+
+// Run whisper.cpp directly, bypassing whisper-node's buggy output parser
+function runWhisperCpp(wavPath) {
+  return new Promise((resolve, reject) => {
+    const mainBinary = path.join(whisperCppDir, 'main');
+    const modelFile = path.join(whisperCppDir, 'models', 'ggml-base.en.bin');
+    const cmd = `"${mainBinary}" -l en -m "${modelFile}" -f "${wavPath}" --no-timestamps 2>/dev/null`;
+
+    exec(cmd, { cwd: whisperCppDir, timeout: 60000 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(`whisper.cpp failed: ${error.message}`));
+        return;
+      }
+      // --no-timestamps outputs plain text, one segment per line
+      const text = stdout.trim();
+      resolve(text);
+    });
+  });
+}
+
+// Transcription endpoint using whisper.cpp directly
+app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No audio file provided' });
+  }
+
+  if (!whisperAvailable || !whisperCppDir) {
+    // Clean up uploaded file
+    fs.unlinkSync(req.file.path);
+    return res.status(503).json({ error: 'Whisper transcription not available' });
+  }
+
+  let wavPath = null;
+  try {
+    // Convert uploaded audio to 16kHz WAV (whisper.cpp requires this)
+    wavPath = await convertToWav(req.file.path);
+
+    // Transcribe with whisper.cpp directly
+    console.log('[whisper] Transcribing:', wavPath);
+    const text = await runWhisperCpp(wavPath);
+    console.log('[whisper] Result:', text ? `"${text.substring(0, 100)}..."` : '(empty)');
+
+    res.json({ text });
+  } catch (error) {
+    console.error('[whisper] Transcription error:', error.message);
+    res.status(500).json({ error: 'Transcription failed: ' + error.message });
+  } finally {
+    // Clean up temp files
+    try {
+      if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      if (wavPath && fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
+    } catch (cleanupErr) {
+      console.warn('Cleanup error:', cleanupErr.message);
+    }
+  }
 });
 
 app.post('/api/tts', async (req, res) => {
