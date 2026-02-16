@@ -383,24 +383,16 @@ function browserSpeak(text) {
 
 // ---- End / Analyze ----
 
-async function endConversation() {
-  setStatus('Analyzing conversation...');
+function endConversation() {
+  // Kick off background analysis (fire-and-forget)
+  fetch(`${API_URL}/sessions/${currentSessionId}/analyze`, {
+    method: 'POST'
+  }).catch(() => {});
 
-  try {
-    const response = await fetch(`${API_URL}/sessions/${currentSessionId}/analyze`, {
-      method: 'POST'
-    });
-
-    const analysis = await response.json();
-
-    document.getElementById('conversation').classList.add('hidden');
-    document.getElementById('results').classList.remove('hidden');
-
-    console.log('Analysis:', analysis);
-  } catch (error) {
-    console.error('Analysis error:', error);
-    setStatus('Error analyzing conversation');
-  }
+  // Immediately show the completion screen
+  document.getElementById('conversation').classList.add('hidden');
+  document.getElementById('results').classList.remove('hidden');
+  setStatus('');
 }
 
 // ---- UI ----

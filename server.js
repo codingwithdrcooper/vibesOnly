@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
+const fsp = require('fs/promises');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 const multer = require('multer');
@@ -290,17 +291,26 @@ app.post('/api/conversation', async (req, res) => {
 });
 
 app.post('/api/sessions/:id/analyze', async (req, res) => {
-  try {
-    const sessionDir = path.join(DATA_DIR, req.params.id);
-    const transcriptPath = path.join(sessionDir, 'transcript.json');
-    
-    if (!fs.existsSync(sessionDir)) {
-      return res.status(404).json({ error: 'Session not found' });
-    }
-    
-    const transcript = JSON.parse(fs.readFileSync(transcriptPath, 'utf-8'));
-    
-    const analysisPrompt = `You are an expert workplace skills assessor. Analyze the transcript below and provide DETAILED feedback with SPECIFIC EXAMPLES from the conversation.
+  const sessionDir = path.join(DATA_DIR, req.params.id);
+
+  if (!fs.existsSync(sessionDir)) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  // Respond immediately so the participant isn't kept waiting
+  res.status(202).json({ status: 'analyzing' });
+
+  // Run the actual analysis in the background
+  runAnalysis(req.params.id, sessionDir).catch(error => {
+    console.error(`Background analysis error for session ${req.params.id}:`, error);
+  });
+});
+
+async function runAnalysis(sessionId, sessionDir) {
+  const transcriptPath = path.join(sessionDir, 'transcript.json');
+  const transcript = JSON.parse(await fsp.readFile(transcriptPath, 'utf-8'));
+
+  const analysisPrompt = `You are an expert workplace skills assessor. Analyze the transcript below and provide DETAILED feedback with SPECIFIC EXAMPLES from the conversation.
     
 Transcript:
 ${transcript.map(m => `${m.role === 'user' ? 'PARTICIPANT' : 'AI SCENARIO'}: ${m.content}`).join('\n')}
@@ -334,31 +344,27 @@ Return JSON in this exact format:
   },
   "overallSummary": "2-3 sentence summary of participant performance"
 }`;
-    
-    const response = await anthropic.messages.create({
-      model: 'claude-3-haiku-20240307',
-      max_tokens: 2048,
-      messages: [{ role: 'user', content: analysisPrompt }]
-    });
-    
-    let analysis;
-    try {
-      analysis = JSON.parse(response.content[0].text);
-    } catch {
-      analysis = { rawAnalysis: response.content[0].text };
-    }
-    
-    fs.writeFileSync(
-      path.join(sessionDir, 'analysis.json'),
-      JSON.stringify(analysis, null, 2)
-    );
-    
-    res.json(analysis);
-  } catch (error) {
-    console.error('Analysis error:', error);
-    res.status(500).json({ error: 'Analysis failed' });
+
+  const response = await anthropic.messages.create({
+    model: 'claude-3-haiku-20240307',
+    max_tokens: 2048,
+    messages: [{ role: 'user', content: analysisPrompt }]
+  });
+
+  let analysis;
+  try {
+    analysis = JSON.parse(response.content[0].text);
+  } catch {
+    analysis = { rawAnalysis: response.content[0].text };
   }
-});
+
+  await fsp.writeFile(
+    path.join(sessionDir, 'analysis.json'),
+    JSON.stringify(analysis, null, 2)
+  );
+
+  console.log(`Analysis complete for session ${sessionId}`);
+}
 
 app.get('/api/admin/sessions', (req, res) => {
   ensureDir(DATA_DIR);
