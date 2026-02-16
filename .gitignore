@@ -5,3 +5,8 @@ node_modules/
 data/sessions/
 temp_*.wav
 temp_*.txt
+uploads/
+.hermes/
+
+# Whisper model files (large binaries)
+models/

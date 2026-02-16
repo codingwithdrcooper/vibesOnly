@@ -4,19 +4,24 @@
   "description": "Voice-based workforce skills assessment platform",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "migrate": "node-pg-migrate up --database-url-var DATABASE_URL --migrations-dir migrations",
+    "migrate:down": "node-pg-migrate down --database-url-var DATABASE_URL --migrations-dir migrations",
+    "start": "npm run migrate && node server.js",
+    "start:no-migrate": "node server.js",
+    "setup-whisper": "bash scripts/setup-whisper.sh"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.0",
-    "@xenova/transformers": "^2.17.2",
     "axios": "^1.13.5",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "whisper": "^0.3.3",
+    "multer": "^1.4.5-lts.1",
+    "node-pg-migrate": "^8.0.4",
+    "pg": "^8.18.0",
     "whisper-node": "^1.1.1"
   }
 }

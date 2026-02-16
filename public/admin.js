@@ -1,6 +1,7 @@
 const API_URL = window.location.origin + '/api';
 
 let allSessions = [];
+let analysisPollTimer = null;
 
 async function loadSessions() {
   const response = await fetch(`${API_URL}/admin/sessions`);
@@ -34,6 +35,12 @@ async function loadSessions() {
 }
 
 async function loadSession(id) {
+  // Clear any previous polling timer
+  if (analysisPollTimer) {
+    clearInterval(analysisPollTimer);
+    analysisPollTimer = null;
+  }
+
   document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
   document.querySelector(`[data-id="${id}"]`)?.classList.add('active');
   
@@ -61,10 +68,12 @@ async function loadSession(id) {
       <div class="detail-content">
         <div class="empty-state">
           <div class="empty-state-icon">⏳</div>
-          <p>Analysis not yet complete</p>
+          <p>Analysis in progress... this will update automatically.</p>
         </div>
       </div>
     `;
+    // Poll every 3 seconds until analysis is available
+    analysisPollTimer = setInterval(() => loadSession(id), 3000);
     return;
   }
   

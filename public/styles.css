@@ -138,3 +138,22 @@ button {
   margin-top: 10px;
   color: #666;
 }
+
+.stt-badge {
+  text-align: center;
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 12px;
+  display: inline-block;
+  margin-bottom: 10px;
+}
+
+.stt-badge.whisper {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.stt-badge.browser {
+  background: #fff3e0;
+  color: #e65100;
+}

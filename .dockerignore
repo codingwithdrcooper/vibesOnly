@@ -1,0 +1,8 @@
+node_modules/
+uploads/
+data/sessions/
+.env
+.env.*
+*.env
+.git/
+.hermes/
