@@ -19,6 +19,12 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Express 5 types route params as string | string[]; this helper extracts a single string value.
+function param(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0];
+  return value ?? '';
+}
+
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
@@ -353,7 +359,7 @@ app.post('/api/sessions', async (req: Request, res: Response) => {
 
 app.get('/api/sessions/:id', async (req: Request, res: Response) => {
   try {
-    const sessionId = req.params.id;
+    const sessionId = param(req.params.id);
 
     // Check session exists
     const sessionResult = await query(
@@ -400,7 +406,7 @@ app.get('/api/sessions/:id', async (req: Request, res: Response) => {
 
 app.put('/api/sessions/:id/transcript', async (req: Request, res: Response) => {
   try {
-    const sessionId = req.params.id;
+    const sessionId = param(req.params.id);
 
     // Check session exists
     const sessionResult = await query(
@@ -528,7 +534,7 @@ function compactUUID(uuid: string): string {
 
 app.post('/api/sessions/:id/analyze', async (req: Request, res: Response) => {
   try {
-    const sessionId = req.params.id;
+    const sessionId = param(req.params.id);
 
     // Check session exists
     const sessionResult = await query(
@@ -616,7 +622,7 @@ app.get(
   requireAdminAuth,
   async (req: Request, res: Response) => {
     try {
-      const sessionId = req.params.id;
+      const sessionId = param(req.params.id);
       const resourceId = compactUUID(sessionId);
 
       // Look up the most recent workflow run for this session

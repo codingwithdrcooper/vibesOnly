@@ -127,15 +127,14 @@ type WorkflowEngineInstance = InstanceType<typeof WorkflowEngineClass>;
 let engine: WorkflowEngineInstance | null = null;
 
 export async function startWorkflowEngine(): Promise<WorkflowEngineInstance> {
-  const PgBoss = (await import('pg-boss')).default;
+  const { PgBoss } = await import('pg-boss');
 
   const boss = new PgBoss({
     connectionString: process.env.DATABASE_URL!,
   });
 
   engine = new WorkflowEngineClass({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pg-boss version mismatch between our install and pg-workflows' bundled types
-    boss: boss as any,
+    boss,
     workflows: [analyzeSessionWorkflow],
   }) as WorkflowEngineInstance;
 

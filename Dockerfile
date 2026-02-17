@@ -1,11 +1,12 @@
-FROM node:20
+# Stage 1: Build
+FROM node:24 AS builder
 
 # Install ffmpeg for audio format conversion and build tools for whisper.cpp
 RUN apt-get update && apt-get install -y ffmpeg build-essential curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install dependencies
+# Install all dependencies (including dev for TypeScript compilation)
 COPY package*.json ./
 RUN npm ci
 
@@ -25,6 +26,20 @@ COPY . .
 
 # Build TypeScript
 RUN npm run build
+
+# Remove dev dependencies to keep the production image lean
+RUN npm prune --omit=dev
+
+# Stage 2: Production
+FROM node:24-slim
+
+# Install only the runtime dependency (ffmpeg for audio conversion)
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy built app and production-only node_modules from builder
+COPY --from=builder /app .
 
 # Create uploads directory for temp audio files
 RUN mkdir -p uploads
