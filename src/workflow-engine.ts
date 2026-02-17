@@ -1,24 +1,16 @@
-import { createRequire } from 'node:module';
 import { generateText, Output } from 'ai';
 import { anthropic } from '@ai-sdk/anthropic';
+import { PgBoss } from 'pg-boss';
 import { z } from 'zod';
+import {
+  WorkflowEngine,
+  workflow,
+  WorkflowStatus,
+} from 'pg-workflows';
 import { query } from './db.js';
 
-// pg-workflows ESM build has a lodash import bug, so we use the CJS build via createRequire.
-// Types are re-exported below for convenience.
-const require = createRequire(import.meta.url);
-const {
-  WorkflowEngine: WorkflowEngineClass,
-  workflow: workflowFn,
-  WorkflowStatus: WorkflowStatusEnum,
-} = require('pg-workflows') as typeof import('pg-workflows');
-
-// Re-export types so consumers can use them without the createRequire workaround
-export type {
-  WorkflowEngine,
-  WorkflowRunProgress,
-} from 'pg-workflows';
-export const WorkflowStatus = WorkflowStatusEnum;
+export { WorkflowEngine, WorkflowStatus };
+export type { WorkflowRunProgress } from 'pg-workflows';
 
 // ---- Analysis result schema ----
 
@@ -38,7 +30,7 @@ const AnalysisResultSchema = z.object({
 
 // ---- Analysis workflow definition ----
 
-const analyzeSessionWorkflow = workflowFn(
+const analyzeSessionWorkflow = workflow(
   'analyze-session',
   async ({ step, input }) => {
     // Step 1: Fetch transcript from DB (durable -- result persisted after completion)
@@ -110,21 +102,17 @@ For each dimension, provide:
 
 // ---- Engine lifecycle ----
 
-type WorkflowEngineInstance = InstanceType<typeof WorkflowEngineClass>;
+let engine: WorkflowEngine | null = null;
 
-let engine: WorkflowEngineInstance | null = null;
-
-export async function startWorkflowEngine(): Promise<WorkflowEngineInstance> {
-  const { PgBoss } = await import('pg-boss');
-
+export async function startWorkflowEngine(): Promise<WorkflowEngine> {
   const boss = new PgBoss({
     connectionString: process.env.DATABASE_URL!,
   });
 
-  engine = new WorkflowEngineClass({
+  engine = new WorkflowEngine({
     boss,
     workflows: [analyzeSessionWorkflow],
-  }) as WorkflowEngineInstance;
+  });
 
   await engine.start();
   console.log('Workflow engine started');
@@ -139,7 +127,7 @@ export async function stopWorkflowEngine(): Promise<void> {
   }
 }
 
-export function getEngine(): WorkflowEngineInstance {
+export function getEngine(): WorkflowEngine {
   if (!engine) {
     throw new Error(
       'Workflow engine not started. Call startWorkflowEngine() first.',
