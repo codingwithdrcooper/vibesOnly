@@ -3,15 +3,18 @@
   "version": "1.0.0",
   "description": "Voice-based workforce skills assessment platform",
   "private": true,
-  "main": "server.js",
+  "type": "module",
+  "main": "dist/server.js",
   "engines": {
     "node": ">=20.0.0"
   },
   "scripts": {
+    "build": "tsc",
     "migrate": "node-pg-migrate up --database-url-var DATABASE_URL --migrations-dir migrations",
     "migrate:down": "node-pg-migrate down --database-url-var DATABASE_URL --migrations-dir migrations",
-    "start": "npm run migrate && node server.js",
-    "start:no-migrate": "node server.js",
+    "start": "npm run migrate && npm run build && node dist/server.js",
+    "start:no-migrate": "node dist/server.js",
+    "start:built": "npm run migrate && node dist/server.js",
     "setup-whisper": "echo 'Whisper is set up automatically during Docker build'"
   },
   "keywords": [],
@@ -26,6 +29,17 @@
     "multer": "^1.4.5-lts.1",
     "node-pg-migrate": "^8.0.4",
     "pg": "^8.18.0",
-    "whisper-node": "^1.1.1"
+    "pg-boss": "^10.1.5",
+    "pg-workflows": "^0.1.0",
+    "whisper-node": "^1.1.1",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.0"
   }
 }

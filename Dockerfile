@@ -23,6 +23,9 @@ RUN curl -L --progress-bar -o node_modules/whisper-node/lib/whisper.cpp/models/g
 # Copy app files (.dockerignore excludes node_modules so the Linux binary is preserved)
 COPY . .
 
+# Build TypeScript
+RUN npm run build
+
 # Create uploads directory for temp audio files
 RUN mkdir -p uploads
 
@@ -34,5 +37,5 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser && \
     chown -R appuser:appuser /app
 USER appuser
 
-# Start the app
-CMD ["npm", "start"]
+# Start the app (TypeScript already compiled during build; just migrate + run)
+CMD ["npm", "run", "start:built"]
