@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
-import Anthropic from '@anthropic-ai/sdk';
+import { generateText, Output } from 'ai';
+import { anthropic } from '@ai-sdk/anthropic';
 import { z } from 'zod';
 import { query } from './db.js';
 
@@ -18,6 +19,22 @@ export type {
   WorkflowRunProgress,
 } from 'pg-workflows';
 export const WorkflowStatus = WorkflowStatusEnum;
+
+// ---- Analysis result schema ----
+
+const AnalysisDimensionSchema = z.object({
+  score: z.number().describe('Score from 1 to 5 (integer)'),
+  quote: z.string().describe('A specific quote from the transcript that supports the assessment'),
+  feedback: z.string().describe('Detailed explanation (2-3 sentences) with a specific example'),
+});
+
+const AnalysisResultSchema = z.object({
+  overallSummary: z.string().describe('2-3 sentence summary of participant performance'),
+  conflictResolution: AnalysisDimensionSchema.describe('Assessment of conflict resolution skills'),
+  professionalism: AnalysisDimensionSchema.describe('Assessment of professionalism'),
+  articulation: AnalysisDimensionSchema.describe('Assessment of articulation and communication clarity'),
+  learning: AnalysisDimensionSchema.describe('Assessment of learning and growth mindset'),
+});
 
 // ---- Analysis workflow definition ----
 
@@ -38,67 +55,38 @@ const analyzeSessionWorkflow = workflowFn(
 
     // Step 2: Call Claude API to generate the analysis (durable -- retried on failure)
     const analysis = await step.run('generate-analysis', async () => {
-      const anthropic = new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-      });
+      const formattedTranscript = transcript
+        .map((m: { role: string; content: string }) =>
+          `${m.role === 'user' ? 'PARTICIPANT' : 'AI SCENARIO'}: ${m.content}`,
+        )
+        .join('\n');
 
-      const analysisPrompt = `You are an expert workplace skills assessor. Analyze the transcript below and provide DETAILED feedback with SPECIFIC EXAMPLES from the conversation.
-    
+      const { output } = await generateText({
+        model: anthropic('claude-haiku-4-5'),
+        maxOutputTokens: 2048,
+        output: Output.object({
+          schema: AnalysisResultSchema,
+          name: 'SessionAnalysis',
+          description: 'Detailed assessment of participant workplace skills based on conversation transcript',
+        }),
+        prompt: `You are an expert workplace skills assessor. Analyze the following conversation transcript between a PARTICIPANT and an AI SCENARIO character.
+
+IMPORTANT: You are assessing the PARTICIPANT's responses ONLY — not the AI scenario character's lines. The AI scenario is a simulated character designed to challenge the participant. Focus exclusively on how the PARTICIPANT communicates, handles conflict, and demonstrates professionalism.
+
 Transcript:
-${transcript.map((m: { role: string; content: string }) => `${m.role === 'user' ? 'PARTICIPANT' : 'AI SCENARIO'}: ${m.content}`).join('\n')}
+${formattedTranscript}
 
-For each dimension below, provide:
-1. A score from 1-5
-2. Detailed feedback (2-3 sentences) explaining the score
-3. At least one SPECIFIC QUOTE from the transcript that supports your assessment
-
-Return JSON in this exact format:
-{
-  "conflictResolution": { 
-    "score": 1-5, 
-    "quote": "specific quote from transcript",
-    "feedback": "detailed explanation with specific example"
-  },
-  "professionalism": { 
-    "score": 1-5, 
-    "quote": "specific quote from transcript", 
-    "feedback": "detailed explanation with specific example"
-  },
-  "articulation": { 
-    "score": 1-5, 
-    "quote": "specific quote from transcript", 
-    "feedback": "detailed explanation with specific example"
-  },
-  "learning": { 
-    "score": 1-5, 
-    "quote": "specific quote from transcript", 
-    "feedback": "detailed explanation with specific example"
-  },
-  "overallSummary": "2-3 sentence summary of participant performance"
-}`;
-
-      const response = await anthropic.messages.create({
-        model: 'claude-3-haiku-20240307',
-        max_tokens: 2048,
-        messages: [{ role: 'user', content: analysisPrompt }],
+For each dimension, provide:
+1. A score from 1-5 based solely on the PARTICIPANT's behavior
+2. Detailed feedback (2-3 sentences) explaining the score with reference to what the PARTICIPANT said or did
+3. At least one SPECIFIC QUOTE from the PARTICIPANT's lines that supports your assessment`,
       });
 
-      let parsedAnalysis: unknown;
-      try {
-        const responseText = response.content?.[0];
-        if (!responseText || responseText.type !== 'text') {
-          throw new Error('Empty response from API');
-        }
-        parsedAnalysis = JSON.parse(responseText.text);
-      } catch {
-        const text =
-          response.content?.[0]?.type === 'text'
-            ? response.content[0].text
-            : 'Analysis failed to parse';
-        parsedAnalysis = { rawAnalysis: text };
+      if (!output) {
+        throw new Error('No structured output generated by the model');
       }
 
-      return parsedAnalysis;
+      return output;
     });
 
     // Step 3: Save the analysis to the database (durable -- guaranteed to run if step 2 succeeded)

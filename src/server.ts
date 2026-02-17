@@ -4,7 +4,8 @@ import cors from 'cors';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Anthropic from '@anthropic-ai/sdk';
+import { generateText } from 'ai';
+import { anthropic } from '@ai-sdk/anthropic';
 import multer from 'multer';
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -24,10 +25,6 @@ function param(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0];
   return value ?? '';
 }
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
 
 const app = express();
 
@@ -508,15 +505,15 @@ app.post('/api/conversation', async (req: Request, res: Response) => {
       content: message,
     });
 
-    const response = await anthropic.messages.create({
-      model: 'claude-3-haiku-20240307',
-      max_tokens: 1024,
+    const { text } = await generateText({
+      model: anthropic('claude-haiku-4-5'),
+      maxOutputTokens: 1024,
       system: systemPrompt,
-      messages: messages,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
     });
 
     res.json({
-      response: response.content?.[0]?.type === 'text' ? response.content[0].text : '',
+      response: text,
       role: 'assistant',
     });
   } catch (error) {
