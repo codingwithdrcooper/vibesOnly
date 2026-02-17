@@ -2,15 +2,8 @@ import { generateText, Output } from 'ai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { PgBoss } from 'pg-boss';
 import { z } from 'zod';
-import {
-  WorkflowEngine,
-  workflow,
-  WorkflowStatus,
-} from 'pg-workflows';
+import { WorkflowEngine, workflow } from 'pg-workflows';
 import { query } from './db.js';
-
-export { WorkflowEngine, WorkflowStatus };
-export type { WorkflowRunProgress } from 'pg-workflows';
 
 // ---- Analysis result schema ----
 
